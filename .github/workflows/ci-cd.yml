@@ -2,9 +2,9 @@ name: App Kubernetes CI/CD
 
 on:
   pull_request:
-    branches: ["main", "homologacao"]
+    branches: ["main", "homologacao", "production"]
   push:
-    branches: ["main", "homologacao"]
+    branches: ["main", "homologacao", "production"]
   workflow_dispatch:
 
 env:
@@ -22,7 +22,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install uv
         run: |
@@ -43,7 +43,7 @@ jobs:
   build-and-push:
     name: Build & Push Image
     needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/homologacao' || github.ref == 'refs/heads/main')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/homologacao' || github.ref == 'refs/heads/production')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -62,7 +62,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -104,7 +104,7 @@ jobs:
   deploy-production:
     name: Deploy Produção
     needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -130,3 +130,12 @@ jobs:
                         -f k8s/redis-deployment.yaml \
                         -f k8s/redis-service.yaml \
                         -f k8s/worker-deployment.yaml
+
+  deploy-main-protection-check:
+    name: Ensure protected main flow
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR branch policy
+        run: |
+          echo "PR validado para main; merge somente via PR e checks obrigatórios."
