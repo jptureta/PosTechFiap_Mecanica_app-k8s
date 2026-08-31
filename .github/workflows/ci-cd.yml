@@ -1,0 +1,132 @@
+name: App Kubernetes CI/CD
+
+on:
+  pull_request:
+    branches: ["main", "homologacao"]
+  push:
+    branches: ["main", "homologacao"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: oficina-mecanica/app
+
+jobs:
+  test:
+    name: Test App
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Create test env
+        run: |
+          cp .env.example .env
+          sed -i 's/^JWT_SECRET_KEY=.*/JWT_SECRET_KEY=test-secret-key-1234567890/' .env
+
+      - name: Run tests
+        run: uv run pytest -q
+
+  build-and-push:
+    name: Build & Push Image
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/homologacao' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oficina-mecanica-app:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oficina-mecanica-app:${{ github.ref_name }}
+
+  deploy-homologacao:
+    name: Deploy Homologação
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/homologacao'
+    runs-on: ubuntu-latest
+    environment: homologacao
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Deploy manifests
+        run: |
+          kubectl apply -f k8s/configmap.yaml \
+                        -f k8s/secrets.yaml \
+                        -f k8s/api-deployment.yaml \
+                        -f k8s/api-service.yaml \
+                        -f k8s/api-hpa.yaml \
+                        -f k8s/redis-deployment.yaml \
+                        -f k8s/redis-service.yaml \
+                        -f k8s/worker-deployment.yaml
+
+  deploy-production:
+    name: Deploy Produção
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Deploy manifests
+        run: |
+          kubectl apply -f k8s/configmap.yaml \
+                        -f k8s/secrets.yaml \
+                        -f k8s/api-deployment.yaml \
+                        -f k8s/api-service.yaml \
+                        -f k8s/api-hpa.yaml \
+                        -f k8s/redis-deployment.yaml \
+                        -f k8s/redis-service.yaml \
+                        -f k8s/worker-deployment.yaml

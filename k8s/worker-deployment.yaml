@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: oficina
+  labels:
+    app: worker
+    app.kubernetes.io/name: oficina
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: worker
+          image: ghcr.io/jptureta/postechfiap_mecanica:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef:
+                name: oficina-config
+            - secretRef:
+                name: oficina-secret
+          resources:
+            limits:
+              cpu: 250m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          # Worker não expõe HTTP, então usamos exec para verificar
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - app.worker
+            initialDelaySeconds: 10
+            periodSeconds: 15
