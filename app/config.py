@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     DB_PORT: str
     DB_NAME: str
 
+    DATADOG_API_KEY: str = ""
+    DATADOG_APP_KEY: str = ""
+    DATADOG_SITE: str = "datadoghq.com"
+    DD_ENV: str = "production"
+    DD_SERVICE: str = "oficina-mecanica-api"
+    DD_VERSION: str = "2.0.0"
+    PROMETHEUS_ENABLED: bool = True
+    OBSERVABILITY_LOG_FORMAT: str = "json"
+
     @computed_field
     @property
     def DATABASE_URL(self) -> str:

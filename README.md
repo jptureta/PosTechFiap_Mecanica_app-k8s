@@ -1,100 +1,123 @@
-# Repositório da Aplicação Principal
+# Oficina Mecânica | Aplicação principal
 
-Este repositório concentra a aplicação principal do sistema Oficina Mecânica, executando em FastAPI e disponibilizada em Kubernetes.
+API REST da solução Oficina Mecânica, construída com FastAPI e executada em Kubernetes.
 
-## Objetivo
+## Visão geral
 
-- manter a API e a lógica do domínio isoladas do restante da infraestrutura
-- empacotar a aplicação em container
-- publicar a imagem em um registry privado ou GHCR
-- aplicar os manifests do Kubernetes em homologação e produção
-- padronizar o deploy por branch e ambiente
+| Item | Informação |
+| --- | --- |
+| Responsabilidade | API, regras de negócio, worker e integrações |
+| Runtime | Python 3.12 |
+| Entrada principal | Kubernetes Service `api` na porta `8000` |
+| Ambientes | `homologacao` e `main`/produção |
+| Pipeline | [GitHub Actions](.github/workflows/ci-cd.yml) |
+| Estado operacional | Operacional quando o cluster, banco e Redis estão disponíveis |
 
-## Stack principal
+## Arquitetura geral
 
-- Python 3.12
-- FastAPI
-- SQLAlchemy
-- PostgreSQL
-- Redis
-- Docker
-- Kubernetes
-- GitHub Actions
+```mermaid
+flowchart LR
+    Client[Cliente / Operador] -->|HTTP| API[API FastAPI\nDeployment api\nNamespace oficina]
+    API -->|Leitura e gravação| DB[(PostgreSQL)]
+    API -->|Eventos assíncronos| Redis[(Redis)]
+    Redis --> Worker[Worker app.worker]
+    API -->|Logs e métricas| DD[Datadog Agent]
+    Worker -->|Logs e métricas| DD
+    DB -->|Healthcheck e métricas| DD
+```
+
+## Stack e componentes
+
+- Python 3.12, FastAPI e SQLAlchemy
+- PostgreSQL e Redis
+- Docker e Kubernetes
+- Alembic para migrações
+- GitHub Actions para testes, imagem e deploy
+- Datadog para logs, métricas e alertas
+
+## Status operacional e endpoints
+
+| Verificação | URL ou comando |
+| --- | --- |
+| Healthcheck | `GET /health` |
+| Métricas internas | `GET /metrics` |
+| Swagger UI | `GET /docs` |
+| Redoc | `GET /redoc` |
+| Imagem Kubernetes | `ghcr.io/jptureta/postechfiap_mecanica:latest` |
+
+Não há hostname público fixo versionado neste repositório. O endpoint ativo depende do cluster e do ingress/load balancer configurado no ambiente.
+
+## Deploy e acesso
+
+### Deploy automatizado
+
+O deploy é executado pelo [pipeline de CI/CD](.github/workflows/ci-cd.yml):
+
+- branch `homologacao`: deploy de homologação;
+- branch `main`: deploy de produção, após aprovação e checks;
+- imagem publicada no GHCR antes da aplicação dos manifests.
+
+### Acesso local ou via NodePort
+
+O Service Kubernetes é `NodePort` na porta `30000`:
+
+- API: http://localhost:30000
+- Swagger: http://localhost:30000/docs
+- Health: http://localhost:30000/health
+
+Em cluster remoto, substitua `localhost` pelo IP do node ou endereço do LoadBalancer/Ingress.
+
+### Acesso via port-forward
+
+```bash
+kubectl get pods -n oficina
+kubectl get svc -n oficina
+kubectl port-forward svc/api 8000:8000 -n oficina
+```
+
+Com o encaminhamento ativo:
+
+- Swagger: http://localhost:8000/docs
+- Health: http://localhost:8000/health
+
+## Execução local
+
+```bash
+cp .env.example .env
+uv sync --dev
+uv run pytest
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+Alternativamente, use o ambiente definido em `docker-compose.yml`.
+
+## CI/CD e configuração
+
+O pipeline instala dependências, executa testes, constrói e publica a imagem Docker e aplica os manifests Kubernetes. Os secrets esperados incluem `KUBE_CONFIG`, `DB_PASSWORD` e `JWT_SECRET_KEY`; as demais configurações devem seguir `.env.example` e os manifests em `k8s/`.
+
+## Observabilidade
+
+- logs estruturados em JSON com `X-Request-ID`;
+- métricas HTTP e de negócio em `app/observability.py`;
+- endpoint `/metrics` para diagnóstico;
+- probes de liveness, readiness e startup;
+- manifesto do Datadog Agent em `k8s/datadog-agent.yaml`;
+- dashboard de exemplo em `datadog-dashboard-example.yaml`.
 
 ## Estrutura do repositório
 
 ```text
-repo-app-k8s/
-├── .github/
-│   └── workflows/
-│       └── ci-cd.yml
-├── alembic/
-├── app/
-├── k8s/
-├── .env.example
-├── alembic.ini
-├── docker-compose.yml
-├── Dockerfile
-├── pyproject.toml
-├── README.md
-└── .gitignore
+app/                 Código da API, domínio e worker
+alembic/             Migrações do banco
+k8s/                 Deployments, Services, probes e Datadog
+tests/               Testes automatizados
+Dockerfile           Imagem da aplicação
+.github/workflows/   Pipeline de CI/CD
 ```
 
-## Fluxo de entrega
+## Segurança e governança
 
-```text
-feature/* -> PR -> homologacao -> deploy automático
-feature/* -> PR -> main -> deploy automático em produção
-```
-
-## Branches
-
-- `homologacao`
-- `main`
-
-## CI/CD
-
-O workflow deste repositório executa:
-
-1. instalação das dependências
-2. testes automatizados da API
-3. build da imagem Docker
-4. push da imagem para o registry
-5. deploy dos manifests em Kubernetes
-
-## Secrets obrigatórios
-
-- `KUBE_CONFIG`
-- `DB_PASSWORD`
-- `JWT_SECRET_KEY`
-
-## Variáveis de ambiente
-
-O projeto usa `.env.example` como referência para configuração local. Em produção e homologação, os valores devem ser enviados via GitHub Actions secrets e environment variables.
-
-## Como executar localmente
-
-```bash
-cp .env.example .env
-python -m venv .venv
-source .venv/bin/activate  # ou .venv\Scripts\activate no Windows
-pip install -r requirements.txt  # se houver
-uv sync --dev
-uv run pytest
-```
-
-## Observações
-
-- a branch `main` é protegida e exige PR
-- deploy em produção só acontece após aprovação e checks verdes
-- o workflow deve validar a API antes do rollout no cluster
-- os manifests do Kubernetes estão na pasta `k8s/` e devem ser aplicados somente após a infraestrutura base estar disponível
-
-## Regras de proteção
-
-- commits diretos bloqueados
-- merge somente via Pull Request
-- revisão mínima obrigatória
-- status checks obrigatórios
-- bloqueio de force push
-- bloqueio de exclusão da branch
+- `main` protegida e deploy de produção sujeito a aprovação;
+- secrets não devem ser versionados;
+- containers executam sem privilégios elevados;
+- merge somente via Pull Request com checks obrigatórios.

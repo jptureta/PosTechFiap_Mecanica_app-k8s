@@ -59,6 +59,11 @@ spec:
                 name: oficina-config
             - secretRef:
                 name: oficina-secret
+          env:
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           resources:
             limits:
               cpu: 500m
@@ -79,7 +84,7 @@ spec:
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /
+              path: /health
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -87,7 +92,11 @@ spec:
           # lentas (ex: migrações de banco pesadas via initContainer)
           startupProbe:
             httpGet:
-              path: /
+              path: /health
               port: 8000
             failureThreshold: 30
             periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]

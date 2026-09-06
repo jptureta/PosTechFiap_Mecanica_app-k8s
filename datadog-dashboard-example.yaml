@@ -1,0 +1,155 @@
+title: Oficina Mecânica - Monitoramento e Observabilidade
+description: Dashboard de exemplo para APIs, Kubernetes e ordens de serviço
+widgets:
+  - layout:
+      x: 0
+      y: 0
+      width: 4
+      height: 3
+    definition:
+      type: query_value
+      title: Volume diário de ordens de serviço
+      requests:
+        - q: "sum:oficina.api.orders_total{*}.as_count()"
+          aggregator: "sum"
+          conditional_formats:
+            - palette: "green_on_white"
+              value: 0
+              comparator: ">="
+      autoscale: true
+      precision: 0
+
+  - layout:
+      x: 4
+      y: 0
+      width: 4
+      height: 3
+    definition:
+      type: query_value
+      title: Latência média da API (ms)
+      requests:
+        - q: "avg:oficina.api.request_latency_ms{*}.as_count()"
+          aggregator: "avg"
+          conditional_formats:
+            - palette: "red_on_white"
+              value: 500
+              comparator: ">="
+      autoscale: true
+      precision: 2
+
+  - layout:
+      x: 8
+      y: 0
+      width: 4
+      height: 3
+    definition:
+      type: query_value
+      title: Falhas de integração
+      requests:
+        - q: "sum:oficina.api.integration_failures{*}.as_count()"
+          aggregator: "sum"
+          conditional_formats:
+            - palette: "red_on_white"
+              value: 1
+              comparator: ">="
+      autoscale: true
+      precision: 0
+
+  - layout:
+      x: 0
+      y: 3
+      width: 6
+      height: 4
+    definition:
+      type: timeseries
+      title: Latência da API por rota
+      requests:
+        - q: "avg:oficina.api.request_latency_ms{*} by {route}.as_count()"
+          display_type: "line"
+          style:
+            palette: "dog_classic"
+
+  - layout:
+      x: 6
+      y: 3
+      width: 6
+      height: 4
+    definition:
+      type: timeseries
+      title: Volume de requisições por status HTTP
+      requests:
+        - q: "sum:oficina.api.requests_total{*} by {status}.as_count()"
+          display_type: "bars"
+          style:
+            palette: "purple"
+
+  - layout:
+      x: 0
+      y: 7
+      width: 6
+      height: 4
+    definition:
+      type: timeseries
+      title: Tempo médio por status da OS
+      requests:
+        - q: "avg:oficina.api.order_duration_ms{*} by {status}.as_count()"
+          display_type: "line"
+          style:
+            palette: "orange"
+
+  - layout:
+      x: 6
+      y: 7
+      width: 6
+      height: 4
+    definition:
+      type: timeseries
+      title: CPU e memória do cluster Kubernetes
+      requests:
+        - q: "avg:kubernetes.cpu.usage.total{*} by {kube_cluster_name}"
+          display_type: "line"
+          style:
+            palette: "blue"
+        - q: "avg:kubernetes.memory.usage.total{*} by {kube_cluster_name}"
+          display_type: "line"
+          style:
+            palette: "green"
+
+  - layout:
+      x: 0
+      y: 11
+      width: 12
+      height: 4
+    definition:
+      type: event_stream
+      title: Logs estruturados e eventos de falha
+      query: "source:oficina"
+      tags: []
+
+  - layout:
+      x: 0
+      y: 15
+      width: 12
+      height: 4
+    definition:
+      type: toplist
+      title: Rotas mais lentas
+      requests:
+        - q: "avg:oficina.api.request_latency_ms{*} by {route}.as_count()"
+          aggregator: "avg"
+          sort: "desc"
+          limit: 10
+
+template_variables:
+  - name: env
+    prefix: env
+    default: prod
+
+  - name: service
+    prefix: service
+    default: oficina-mecanica-api
+
+  - name: cluster
+    prefix: kube_cluster_name
+    default: oficina-mecanica
+

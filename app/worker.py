@@ -7,13 +7,15 @@ import json
 import logging
 import signal
 import sys
+
 from app.infrastructure.redis_client import consumir_notificacao
+from app.observability import logger, record_integration_failure, record_order_status_transition
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger("worker")
+logger = logger
 
 running = True
 
@@ -39,16 +41,21 @@ def processar_notificacao(notificacao: dict) -> None:
             dados.get("ordem_servico_id"),
             dados.get("cliente_id"),
             dados.get("valor_total"),
+            extra={"order_id": dados.get("ordem_servico_id"), "status": "recebida"},
         )
+        record_order_status_transition("recebida", dados.get("ordem_servico_id"))
     elif tipo == "status_alterado":
         logger.info(
             "Status alterado - OS: %s, De: %s -> Para: %s",
             dados.get("ordem_servico_id"),
             dados.get("status_anterior"),
             dados.get("status_novo"),
+            extra={"order_id": dados.get("ordem_servico_id"), "status": dados.get("status_novo")},
         )
+        record_order_status_transition(str(dados.get("status_novo")), dados.get("ordem_servico_id"))
     else:
-        logger.warning("Tipo de notificação desconhecido: %s", tipo)
+        logger.warning("Tipo de notificação desconhecido: %s", tipo, extra={"event_type": tipo})
+        record_integration_failure("redis_consumer", "unknown_notification_type")
 
 
 def main():

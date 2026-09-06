@@ -16,3 +16,8 @@ data:
   JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "60"
   APP_ENV: "production"
   APP_DEBUG: "false"
+  DD_ENV: "prod"
+  DD_SERVICE: "oficina-mecanica-api"
+  DD_VERSION: "2.0.0"
+  OBSERVABILITY_LOG_FORMAT: "json"
+  PROMETHEUS_ENABLED: "true"
