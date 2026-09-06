@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 from app.infrastructure.database import get_db
 from app.services.auth_service import decode_access_token
 from app.adapters.gateways.usuario_repository import UsuarioRepository
+from app.adapters.gateways.cliente_repository import ClienteRepository
 from app.domain.entities.usuario import Usuario
+from app.domain.entities.cliente import Cliente
 from app.config import get_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -45,3 +47,40 @@ def get_admin_user(current_user: Usuario = Depends(get_current_user)) -> Usuario
             detail="Permissão de administrador necessária",
         )
     return current_user
+
+
+def get_current_cliente(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> Cliente:
+    """
+    Dependency que aceita tokens JWT emitidos pela Lambda de autenticação por CPF.
+
+    Use esta dependência em rotas que devem ser acessíveis por clientes
+    autenticados com seu CPF (em vez de usuários admin com username/senha).
+    """
+    token_data = decode_access_token(token)
+
+    if token_data.tipo != "cliente" or not token_data.cpf:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta rota requer autenticação de cliente via CPF",
+        )
+
+    repo = ClienteRepository(db)
+    cliente = repo.buscar_por_cpf_cnpj(token_data.cpf)
+
+    if not cliente:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Cliente não encontrado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not cliente.ativo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cliente inativo",
+        )
+
+    return cliente

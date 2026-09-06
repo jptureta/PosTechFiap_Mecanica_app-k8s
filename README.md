@@ -35,17 +35,18 @@ flowchart LR
 - GitHub Actions para testes, imagem e deploy
 - Datadog para logs, métricas e alertas
 
-## Status operacional e endpoints
+## Status operacional e endpoints (Swagger / OpenAPI)
 
-| Verificação | URL ou comando |
-| --- | --- |
-| Healthcheck | `GET /health` |
-| Métricas internas | `GET /metrics` |
-| Swagger UI | `GET /docs` |
-| Redoc | `GET /redoc` |
-| Imagem Kubernetes | `ghcr.io/jptureta/postechfiap_mecanica:latest` |
+| Verificação / Documentação | Caminho / URL | Descrição |
+| --- | --- | --- |
+| **Swagger UI (Interativo)** | [`/docs`](http://localhost:8000/docs) | Interface interativa OpenAPI para teste dos endpoints |
+| **ReDoc** | [`/redoc`](http://localhost:8000/redoc) | Documentação técnica alternativa em formato ReDoc |
+| **OpenAPI Schema (JSON)** | [`/openapi.json`](http://localhost:8000/openapi.json) | Especificação OpenAPI 3.0 para importação no Postman/Insomnia |
+| **Healthcheck** | [`/health`](http://localhost:8000/health) | Verificação de disponibilidade e uptime da aplicação |
+| **Métricas** | [`/metrics`](http://localhost:8000/metrics) | Snapshot de requisições, latências P95 e status |
+| **Imagem de Container** | `ghcr.io/jptureta/postechfiap_mecanica:latest` | Imagem Docker oficial publicada via CI/CD |
 
-Não há hostname público fixo versionado neste repositório. O endpoint ativo depende do cluster e do ingress/load balancer configurado no ambiente.
+*Nota: Em ambiente local ou via port-forward, acesse em `http://localhost:8000/docs` (ou porta `30000` via NodePort). Em produção na AWS, acesse através da URL base do API Gateway / Load Balancer.*
 
 ## Deploy e acesso
 
@@ -102,7 +103,8 @@ O pipeline instala dependências, executa testes, constrói e publica a imagem D
 - endpoint `/metrics` para diagnóstico;
 - probes de liveness, readiness e startup;
 - manifesto do Datadog Agent em `k8s/datadog-agent.yaml`;
-- dashboard de exemplo em `datadog-dashboard-example.yaml`.
+- dashboard de exemplo em `datadog-dashboard-example.yaml`;
+- definição declarativa de alertas e monitores em `datadog-monitors.yaml`.
 
 ## Estrutura do repositório
 

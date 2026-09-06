@@ -31,6 +31,20 @@ def create_access_token(data: dict) -> str:
 def decode_access_token(token: str) -> TokenData:
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        tipo = payload.get("tipo", "admin")
+
+        if tipo == "cliente":
+            # Token emitido pela Lambda — identidade é o CPF (campo "sub")
+            cpf: str | None = payload.get("sub")
+            if not cpf:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token de cliente inválido",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return TokenData(cpf=cpf, tipo="cliente")
+
+        # Token de usuário admin — identidade é o username (campo "sub")
         username: str | None = payload.get("sub")
         if username is None:
             raise HTTPException(
@@ -38,7 +52,8 @@ def decode_access_token(token: str) -> TokenData:
                 detail="Token inválido",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        return TokenData(username=username)
+        return TokenData(username=username, tipo="admin")
+
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

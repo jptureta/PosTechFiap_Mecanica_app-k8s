@@ -1,0 +1,141 @@
+# ─────────────────────────────────────────────────────────────
+# Datadog Monitors - Oficina Mecânica
+# Definição declarativa de alertas e monitores para API,
+# processamento assíncrono de ordens de serviço e infraestrutura.
+# ─────────────────────────────────────────────────────────────
+
+monitors:
+  # 1. Alerta Crítico: Falhas no Processamento de Ordens de Serviço
+  - name: "[Oficina] Falhas no Processamento de Ordens de Servico"
+    type: "metric alert"
+    query: "sum(last_5m):sum:oficina.api.integration_failures{service:oficina-mecanica-api} by {integration}.as_count() > 3"
+    message: |
+      {{#is_alert}}
+      ALERTA CRÍTICO: Detectado aumento anormal de falhas no processamento assíncrono de ordens de serviço!
+      Integração com falha: {{integration.name}}
+      Valor atual: {{value}} falhas nos últimos 5 minutos.
+
+      Ação recomendada:
+      1. Verificar logs do worker com: `kubectl logs -n oficina -l app=worker`
+      2. Inspecionar a fila Redis e conexões com o banco PostgreSQL.
+      {{/is_alert}}
+
+      {{#is_recovery}}
+      RECUPERADO: O processamento de ordens de serviço normalizou.
+      {{/is_recovery}}
+    tags:
+      - "service:oficina-mecanica-api"
+      - "env:prod"
+      - "team:backend"
+      - "priority:p1"
+    options:
+      thresholds:
+        critical: 3.0
+        warning: 1.0
+      notify_no_data: true
+      no_data_timeframe: 10
+      renotify_interval: 30
+      include_tags: true
+
+  # 2. Alerta: Latência Elevada das APIs (P95)
+  - name: "[Oficina] Latencia Elevada na API (P95 > 1000ms)"
+    type: "metric alert"
+    query: "avg(last_5m):avg:oficina.api.request_latency_ms{service:oficina-mecanica-api} by {route}.as_count() > 1000"
+    message: |
+      {{#is_alert}}
+      ALERTA: A rota {{route.name}} está com latência média acima de 1000ms nos últimos 5 minutos.
+      Latência atual: {{value}}ms.
+
+      Ação recomendada:
+      1. Verificar métricas de CPU e I/O do banco de dados RDS.
+      2. Inspecionar queries lentas e conexões ativas.
+      {{/is_alert}}
+
+      {{#is_recovery}}
+      RECUPERADO: A latência da rota {{route.name}} voltou aos níveis esperados.
+      {{/is_recovery}}
+    tags:
+      - "service:oficina-mecanica-api"
+      - "env:prod"
+      - "priority:p2"
+    options:
+      thresholds:
+        critical: 1000.0
+        warning: 600.0
+      notify_no_data: false
+
+  # 3. Alerta: Taxa Alta de Erros HTTP 5xx
+  - name: "[Oficina] Taxa Alta de Erros HTTP 5xx"
+    type: "metric alert"
+    query: "sum(last_5m):sum:oficina.api.requests_total{service:oficina-mecanica-api,status:500}.as_count() > 5"
+    message: |
+      {{#is_alert}}
+      ALERTA: Respostas HTTP 500 detectadas na API da Oficina Mecânica.
+      Total de erros: {{value}} nos últimos 5 minutos.
+
+      Ação recomendada:
+      1. Filtrar logs no Datadog com `source:oficina status_code:500`.
+      2. Inspecionar o campo `exception` e `request_id` correlacionado.
+      {{/is_alert}}
+
+      {{#is_recovery}}
+      RECUPERADO: A API não está mais gerando erros HTTP 500.
+      {{/is_recovery}}
+    tags:
+      - "service:oficina-mecanica-api"
+      - "env:prod"
+      - "priority:p1"
+    options:
+      thresholds:
+        critical: 5.0
+        warning: 2.0
+      notify_no_data: false
+
+  # 4. Alerta: Falha no Healthcheck da API (Disponibilidade / Uptime)
+  - name: "[Oficina] Healthcheck da API Falhando"
+    type: "service check"
+    query: "\"http.can_connect\".over(\"instance:oficina_api_health\").by(\"host\").last(3).count_by_status()"
+    message: |
+      {{#is_alert}}
+      ALERTA CRÍTICO: O endpoint de healthcheck /health da API não respondeu com status 200 nas últimas 3 tentativas.
+      A aplicação pode estar indisponível ou em crash-loop.
+
+      Ação recomendada:
+      1. Executar: `kubectl get pods -n oficina -l app=api`
+      2. Verificar logs de startup da aplicação.
+      {{/is_alert}}
+
+      {{#is_recovery}}
+      RECUPERADO: O endpoint de healthcheck da API está respondendo normalmente.
+      {{/is_recovery}}
+    tags:
+      - "service:oficina-mecanica-api"
+      - "env:prod"
+      - "priority:p1"
+    options:
+      thresholds:
+        critical: 1
+        warning: 1
+        ok: 1
+      notify_no_data: true
+      no_data_timeframe: 5
+
+  # 5. Alerta: Alto Consumo de CPU nos Pods Kubernetes
+  - name: "[Oficina] Alto Consumo de CPU nos Pods (> 85%)"
+    type: "metric alert"
+    query: "avg(last_5m):avg:kubernetes.cpu.usage.total{kube_namespace:oficina} by {kube_container_name} > 0.85"
+    message: |
+      {{#is_alert}}
+      ALERTA: O container {{kube_container_name.name}} está com utilização média de CPU acima de 85%.
+      O Horizontal Pod Autoscaler (HPA) deve acionar réplicas adicionais.
+      {{/is_alert}}
+    tags:
+      - "env:prod"
+      - "kube_namespace:oficina"
+      - "priority:p2"
+    options:
+      thresholds:
+        critical: 0.85
+        warning: 0.70
+      notify_no_data: false
+
