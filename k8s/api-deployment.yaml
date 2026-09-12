@@ -27,8 +27,8 @@ spec:
         fsGroup: 1000
       initContainers:
         - name: db-migration
-          image: ghcr.io/jptureta/oficina-mecanica-app:homologacao
-          imagePullPolicy: Always
+          image: ghcr.io/jptureta/postechfiap_mecanica:latest
+          imagePullPolicy: IfNotPresent
           command: ["alembic", "upgrade", "head"]
           envFrom:
             - configMapRef:
@@ -49,8 +49,8 @@ spec:
                 - ALL
       containers:
         - name: api
-          image: ghcr.io/jptureta/oficina-mecanica-app:homologacao
-          imagePullPolicy: Always
+          image: ghcr.io/jptureta/postechfiap_mecanica:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
               name: http
