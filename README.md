@@ -9,7 +9,7 @@ API REST da solução Oficina Mecânica, construída com FastAPI e executada em 
 | Responsabilidade | API, regras de negócio, worker e integrações |
 | Runtime | Python 3.12 |
 | Entrada principal | Kubernetes Service `api` na porta `8000` |
-| Ambientes | `homologacao` e `main`/produção |
+| Ambientes | `homologacao` e `production` |
 | Pipeline | [GitHub Actions](.github/workflows/ci-cd.yml) |
 | Estado operacional | Operacional quando o cluster, banco e Redis estão disponíveis |
 
@@ -54,8 +54,9 @@ flowchart LR
 
 O deploy é executado pelo [pipeline de CI/CD](.github/workflows/ci-cd.yml):
 
-- branch `homologacao`: deploy de homologação;
-- branch `main`: deploy de produção, após aprovação e checks;
+- branch `main`: branch principal protegida; recebe Pull Requests de features e passa pelos checks obrigatórios (não faz deploy sozinha);
+- branch `homologacao`: deploy automático de homologação;
+- branch `production`: deploy automático de produção;
 - imagem publicada no GHCR antes da aplicação dos manifests.
 
 ### Acesso local ou via NodePort
@@ -119,7 +120,7 @@ Dockerfile           Imagem da aplicação
 
 ## Segurança e governança
 
-- `main` protegida e deploy de produção sujeito a aprovação;
+- `main` protegida; deploys automáticos partem das branches `homologacao` e `production`, ambas também protegidas contra push direto;
 - secrets não devem ser versionados;
 - containers executam sem privilégios elevados;
 - merge somente via Pull Request com checks obrigatórios.
