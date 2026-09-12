@@ -92,6 +92,7 @@ jobs:
 
       - name: Deploy manifests
         run: |
+          kubectl create namespace oficina --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f k8s/configmap.yaml \
                         -f k8s/secrets.yaml \
                         -f k8s/api-deployment.yaml \
@@ -122,6 +123,7 @@ jobs:
 
       - name: Deploy manifests
         run: |
+          kubectl create namespace oficina --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f k8s/configmap.yaml \
                         -f k8s/secrets.yaml \
                         -f k8s/api-deployment.yaml \

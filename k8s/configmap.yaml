@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: oficina
 data:
-  DB_HOST: "db"
+  DB_HOST: "oficina-postgres-db.cqkbczoc8vrp.us-east-1.rds.amazonaws.com"
   DB_PORT: "5432"
   DB_NAME: "oficina_db"
   REDIS_HOST: "redis"
