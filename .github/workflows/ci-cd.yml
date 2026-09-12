@@ -70,6 +70,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/oficina-mecanica-app:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/oficina-mecanica-app:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oficina-mecanica-app:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/postechfiap_mecanica:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/postechfiap_mecanica:latest
 
   deploy-homologacao:
     name: Deploy Homologação

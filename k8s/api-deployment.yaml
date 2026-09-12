@@ -27,8 +27,8 @@ spec:
         fsGroup: 1000
       initContainers:
         - name: db-migration
-          image: ghcr.io/jptureta/postechfiap_mecanica:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/jptureta/oficina-mecanica-app:homologacao
+          imagePullPolicy: Always
           command: ["alembic", "upgrade", "head"]
           envFrom:
             - configMapRef:
@@ -49,8 +49,8 @@ spec:
                 - ALL
       containers:
         - name: api
-          image: ghcr.io/jptureta/postechfiap_mecanica:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/jptureta/oficina-mecanica-app:homologacao
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
               name: http
@@ -84,15 +84,13 @@ spec:
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health
+              path: /
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
-          # startupProbe protege contra kills prematuros durante inicializações
-          # lentas (ex: migrações de banco pesadas via initContainer)
           startupProbe:
             httpGet:
-              path: /health
+              path: /
               port: 8000
             failureThreshold: 30
             periodSeconds: 5
