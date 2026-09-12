@@ -1,13 +1,13 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.infrastructure.database import get_db
 from app.schemas.ordem_servico import (
-    OrdemServicoCreate, OrdemServicoUpdate, OrdemServicoResponse, 
+    OrdemServicoCreate, OrdemServicoUpdate, OrdemServicoResponse,
     AlterarStatusRequest, AdicionarItemServicoRequest, AdicionarItemPecaRequest,
     OrdemServicoResumo, TempoMedioResponse
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_actor, assert_pode_ver_ordem, Actor
 from app.domain.enums import StatusOrdemServico
 
 # Repositories (Adapters)
@@ -46,9 +46,13 @@ def handle_os_error(e: Exception):
     raise HTTPException(status_code=500, detail=f"Erro interno no domínio de ordens de serviço: {str(e)}")
 
 
+# ─────────────────────────────────────────────────────────────
+# Ações exclusivas de admin (funcionário da oficina)
+# ─────────────────────────────────────────────────────────────
+
 @router.post("/", response_model=OrdemServicoResponse, status_code=201, dependencies=[Depends(get_current_user)])
 def criar_ordem_servico(dados: OrdemServicoCreate, db: Session = Depends(get_db)):
-    """Abre uma nova ordem de serviço."""
+    """Abre uma nova ordem de serviço (apenas funcionários da oficina)."""
     repo = OrdemServicoRepository(db)
     use_case = CriarOrdemServicoUseCase(
         repo,
@@ -78,12 +82,12 @@ def listar_ordens_servico(
     limit: int = Query(100, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """Lista ordens de serviço ativas com ordenação por prioridade de status.
-    
+    """Lista ordens de serviço ativas com ordenação por prioridade de status (apenas admin).
+
     Ordenação padrão: Em Execução > Aguardando Aprovação > Diagnóstico > Recebida.
     Dentro de cada status, as mais antigas aparecem primeiro.
     OS com status Finalizada, Entregue e Cancelada são excluídas por padrão.
-    
+
     Utilizar incluir_finalizadas=true para listar todas as OS sem filtro de status ativo.
     """
     repo = OrdemServicoRepository(db)
@@ -102,15 +106,35 @@ def listar_ordens_servico(
 #@router.get("/relatorios/tempo-medio", response_model=TempoMedioResponse, dependencies=[Depends(get_current_user)])
 @router.get("/tempo-medio", response_model=TempoMedioResponse, dependencies=[Depends(get_current_user)])
 def calcular_tempo_medio(db: Session = Depends(get_db)):
-    """Calcula o tempo médio de execução das ordens finalizadas."""
+    """Calcula o tempo médio de execução das ordens finalizadas (apenas admin)."""
     repo = OrdemServicoRepository(db)
     use_case = RelatoriosOrdemServicoUseCase(repo)
     return use_case.calcular_tempo_medio_execucao()
 
 
-@router.get("/cliente/{cliente_id}", response_model=List[OrdemServicoResponse], dependencies=[Depends(get_current_user)])
-def buscar_ordens_por_cliente(cliente_id: int, db: Session = Depends(get_db)):
-    """Busca todas as ordens de serviço de um cliente."""
+# ─────────────────────────────────────────────────────────────
+# Ações compartilhadas (admin OU cliente autenticado por CPF)
+#
+# O cliente só enxerga o que é dele. A checagem acontece via
+# `assert_pode_ver_ordem` depois de carregar a OS.
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/cliente/{cliente_id}", response_model=List[OrdemServicoResponse])
+def buscar_ordens_por_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    actor: Actor = Depends(get_current_actor),
+):
+    """Lista todas as ordens de serviço de um cliente.
+
+    - Admin pode consultar qualquer cliente.
+    - Cliente autenticado por CPF só pode consultar as próprias.
+    """
+    if actor.is_cliente and actor.cliente_id != cliente_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Você só pode listar as suas próprias ordens de serviço",
+        )
     repo = OrdemServicoRepository(db)
     use_case = ListarOrdensServicoUseCase(repo)
     return use_case.execute(cliente_id=cliente_id)
@@ -132,20 +156,73 @@ def acompanhar_ordem_servico(ordem_id: int, cpf_cnpj: str = Query(...), db: Sess
         handle_os_error(e)
 
 
-@router.get("/{ordem_id}", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
-def buscar_ordem_servico(ordem_id: int, db: Session = Depends(get_db)):
-    """Busca os detalhes de uma ordem de serviço."""
+@router.get("/{ordem_id}", response_model=OrdemServicoResponse)
+def buscar_ordem_servico(
+    ordem_id: int,
+    db: Session = Depends(get_db),
+    actor: Actor = Depends(get_current_actor),
+):
+    """Detalhe de uma ordem de serviço. Cliente só vê as próprias."""
     repo = OrdemServicoRepository(db)
     use_case = BuscarOrdemServicoUseCase(repo)
+    try:
+        ordem = use_case.execute(ordem_id)
+    except Exception as e:
+        handle_os_error(e)
+    assert_pode_ver_ordem(actor, ordem.cliente_id)
+    return ordem
+
+
+@router.post("/{ordem_id}/aprovar", response_model=OrdemServicoResponse)
+@router.post("/{ordem_id}/aprovar-orcamento", response_model=OrdemServicoResponse)
+def aprovar_orcamento(
+    ordem_id: int,
+    db: Session = Depends(get_db),
+    actor: Actor = Depends(get_current_actor),
+):
+    """Aprova o orçamento de uma ordem de serviço. Cliente só aprova as próprias."""
+    repo = OrdemServicoRepository(db)
+    ordem_atual = repo.buscar_por_id(ordem_id)
+    if not ordem_atual:
+        raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada")
+    assert_pode_ver_ordem(actor, ordem_atual.cliente_id)
+
+    notificacao = EmailNotificacaoService()
+    use_case = AprovarOrcamentoUseCase(repo, PecaRepository(db), notificacao_service=notificacao)
     try:
         return use_case.execute(ordem_id)
     except Exception as e:
         handle_os_error(e)
 
 
+@router.post("/{ordem_id}/recusar", response_model=OrdemServicoResponse)
+def recusar_orcamento(
+    ordem_id: int,
+    db: Session = Depends(get_db),
+    actor: Actor = Depends(get_current_actor),
+):
+    """Recusa o orçamento de uma ordem de serviço. Cliente só recusa as próprias."""
+    repo = OrdemServicoRepository(db)
+    ordem_atual = repo.buscar_por_id(ordem_id)
+    if not ordem_atual:
+        raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada")
+    assert_pode_ver_ordem(actor, ordem_atual.cliente_id)
+
+    notificacao = EmailNotificacaoService()
+    use_case = RecusarOrcamentoUseCase(repo, notificacao_service=notificacao)
+    try:
+        return use_case.execute(ordem_id)
+    except Exception as e:
+        handle_os_error(e)
+
+
+# ─────────────────────────────────────────────────────────────
+# Mutações da OS — restritas ao admin (funcionário da oficina)
+# ─────────────────────────────────────────────────────────────
+
 @router.patch("/{ordem_id}/status", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
 def atualizar_status(ordem_id: int, dados: AlterarStatusRequest, db: Session = Depends(get_db)):
-    """Atualiza o status de uma ordem de serviço com notificação via e-mail."""
+    """Atualiza o status de uma ordem de serviço com notificação via e-mail (apenas admin)."""
     repo = OrdemServicoRepository(db)
     notificacao = EmailNotificacaoService()
     use_case = AtualizarStatusOrdemServicoUseCase(repo, PecaRepository(db), notificacao_service=notificacao)
@@ -155,34 +232,9 @@ def atualizar_status(ordem_id: int, dados: AlterarStatusRequest, db: Session = D
         handle_os_error(e)
 
 
-@router.post("/{ordem_id}/aprovar", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
-@router.post("/{ordem_id}/aprovar-orcamento", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
-def aprovar_orcamento(ordem_id: int, db: Session = Depends(get_db)):
-    """Aprova o orçamento de uma ordem de serviço."""
-    repo = OrdemServicoRepository(db)
-    notificacao = EmailNotificacaoService()
-    use_case = AprovarOrcamentoUseCase(repo, PecaRepository(db), notificacao_service=notificacao)
-    try:
-        return use_case.execute(ordem_id)
-    except Exception as e:
-        handle_os_error(e)
-
-
-@router.post("/{ordem_id}/recusar", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
-def recusar_orcamento(ordem_id: int, db: Session = Depends(get_db)):
-    """Recusa o orçamento de uma ordem de serviço."""
-    repo = OrdemServicoRepository(db)
-    notificacao = EmailNotificacaoService()
-    use_case = RecusarOrcamentoUseCase(repo, notificacao_service=notificacao)
-    try:
-        return use_case.execute(ordem_id)
-    except Exception as e:
-        handle_os_error(e)
-
-
 @router.post("/{ordem_id}/servicos", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
 def adicionar_servico(ordem_id: int, dados: AdicionarItemServicoRequest, db: Session = Depends(get_db)):
-    """Adiciona um serviço à ordem de serviço."""
+    """Adiciona um serviço à ordem de serviço (apenas admin)."""
     repo = OrdemServicoRepository(db)
     use_case = AdicionarItemOrdemServicoUseCase(repo, ServicoRepository(db), PecaRepository(db))
     try:
@@ -193,7 +245,7 @@ def adicionar_servico(ordem_id: int, dados: AdicionarItemServicoRequest, db: Ses
 
 @router.post("/{ordem_id}/pecas", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
 def adicionar_peca(ordem_id: int, dados: AdicionarItemPecaRequest, db: Session = Depends(get_db)):
-    """Adiciona uma peça à ordem de serviço."""
+    """Adiciona uma peça à ordem de serviço (apenas admin)."""
     repo = OrdemServicoRepository(db)
     use_case = AdicionarItemOrdemServicoUseCase(repo, ServicoRepository(db), PecaRepository(db))
     try:
@@ -204,7 +256,7 @@ def adicionar_peca(ordem_id: int, dados: AdicionarItemPecaRequest, db: Session =
 
 @router.delete("/{ordem_id}/servicos/{servico_id}", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
 def remover_servico(ordem_id: int, servico_id: int, db: Session = Depends(get_db)):
-    """Remove um serviço da ordem de serviço."""
+    """Remove um serviço da ordem de serviço (apenas admin)."""
     repo = OrdemServicoRepository(db)
     use_case = RemoverItemOrdemServicoUseCase(repo)
     try:
@@ -215,7 +267,7 @@ def remover_servico(ordem_id: int, servico_id: int, db: Session = Depends(get_db
 
 @router.delete("/{ordem_id}/pecas/{peca_id}", response_model=OrdemServicoResponse, dependencies=[Depends(get_current_user)])
 def remover_peca(ordem_id: int, peca_id: int, db: Session = Depends(get_db)):
-    """Remove uma peça da ordem de serviço."""
+    """Remove uma peça da ordem de serviço (apenas admin)."""
     repo = OrdemServicoRepository(db)
     use_case = RemoverItemOrdemServicoUseCase(repo, PecaRepository(db))
     try:
