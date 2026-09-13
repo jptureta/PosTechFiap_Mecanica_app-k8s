@@ -45,7 +45,8 @@ flowchart TD
     Lambda -->>|Retorna JWT com sub: CPF| Cliente
 
     Cliente -->|2. Chamadas com Bearer JWT| APIGW
-    APIGW -->|Proxy| EKS_API[FastAPI API no AWS EKS]
+    APIGW -->|VPC Link| NLB[NLB interno]
+    NLB -->|NodePort 30000| EKS_API[FastAPI API no AWS EKS]
 
     subgraph EKS[Cluster AWS EKS]
         EKS_API -->|Transacoes SQL| RDS
@@ -72,13 +73,14 @@ Visão integrada de nuvem AWS, APIs, banco de dados e monitoramento:
 flowchart TB
     subgraph Borda[Borda & Autenticação AWS]
         APIGW[AWS API Gateway\nHTTP API - prod]
+        VPCLINK[AWS API Gateway VPC Link]
         LambdaAuth[AWS Lambda\nauth_cpf_handler / Python 3.12]
         SSM[AWS SSM Parameter Store\n/oficina/jwt/* & /oficina/db/*]
     end
 
     subgraph VPC_EKS[AWS VPC - Cluster EKS]
         subgraph Subnets_Publicas[Subnets Multi-AZ]
-            NLB[AWS Network Load Balancer / Ingress]
+            NLB[AWS Network Load Balancer interno]
             subgraph NodeGroup[EKS Managed Node Group\nt3.medium / Auto Scaling 2 a 5 nós]
                 subgraph Pods[Namespace oficina]
                     API[FastAPI API Pods\nMin 2 - Max 10 HPA]
@@ -92,9 +94,9 @@ flowchart TB
 
     subgraph VPC_Data[AWS VPC - Camada de Dados]
         subgraph SubnetGroup[DB Subnet Group Multi-AZ]
-            RDS[(AWS RDS PostgreSQL 16\ngp3 Storage Autoscaling)]
+            RDS[(AWS RDS PostgreSQL 16\ngp3 Storage Autoscaling\nATUALMENTE publico)]
         end
-        RDS_SG[Security Group RDS\nPorta 5432 restrita]
+        RDS_SG[Security Group RDS\nPorta 5432 liberada para 0.0.0.0/0]
     end
 
     subgraph Observabilidade[Datadog Monitoring SaaS]
@@ -108,7 +110,8 @@ flowchart TB
     APIGW -->|/auth/cpf| LambdaAuth
     SSM -.->|Injeta Segredos| LambdaAuth
     LambdaAuth -->|Consulta Cliente| RDS
-    APIGW -->|/api/v1/*| NLB
+    APIGW -->|/api/v1/*| VPCLINK
+    VPCLINK --> NLB
     NLB --> API
 
     API -->|Pool de Conexões| RDS
@@ -137,6 +140,8 @@ sequenceDiagram
     actor Cliente as Cliente
     participant APIGW as AWS API Gateway
     participant Lambda as AWS Lambda (Auth)
+    participant VPCLINK as API Gateway VPC Link
+    participant NLB as NLB interno
     participant RDS as AWS RDS PostgreSQL
     participant EKS as FastAPI API (EKS)
     participant Redis as Redis Queue
@@ -167,7 +172,9 @@ sequenceDiagram
     %% Abertura de OS
     Note over Cliente,DD: 2. Abertura de Ordem de Serviço com Token JWT
     Cliente->>APIGW: POST /api/v1/ordens-servico [Header: Authorization Bearer eyJ...]
-    APIGW->>EKS: Roteia requisição para a API
+    APIGW->>VPCLINK: Encaminha rota catch-all
+    VPCLINK->>NLB: HTTP proxy para listener interno
+    NLB->>EKS: Encaminha para NodePort 30000
     EKS->>EKS: decode_access_token(token) & valida assinatura JWT
     EKS->>RDS: Inicia transação: valida veículo, insere OS e itens de serviço/peça
     RDS-->>EKS: OS criada com status 'recebida'
@@ -186,65 +193,26 @@ sequenceDiagram
 
 ## 7. RFCs (Request for Comments)
 
-### RFC 001 — Adoção da AWS e Orquestração com AWS EKS
-- **Contexto:** A solução necessita de disponibilidade em nuvem, facilidade de deploy contínuo (CI/CD) e suporte nativo a escalabilidade elástica tanto de instâncias de aplicação quanto de nós computacionais.
-- **Decisão:** Utilizar a **AWS** como provedor de nuvem e o **AWS EKS (Elastic Kubernetes Service)** provisionado via Terraform com subnets multi-AZ e Managed Node Group.
-- **Justificativa:** 
-  - O EKS oferece um control plane gerenciado com SLA de 99,95%, eliminando o overhead de manutenção de nós master.
-  - O Managed Node Group permite atualização segura de nós, drenagem automatizada e auto scaling nativo integrado com o Cluster Autoscaler.
-- **Consequências:**
-  - Configuração de VPC com subnets públicas e privadas em no mínimo 2 Availability Zones.
-  - Uso de IAM Roles para Service Accounts (IRSA) e permissões granulares por política de menor privilégio.
+Os registros de decisão técnica são mantidos individualmente em `docs/rfcs/`. A tabela abaixo funciona como índice e resumo do estado atual.
 
-### RFC 002 — Banco de Dados Gerenciado: AWS RDS PostgreSQL 16
-- **Contexto:** A aplicação de oficina mecânica gerencia dados transacionais sensíveis (pedidos, valores, estoque, histórico de ordens) que exigem conformidade estrita com as propriedades ACID.
-- **Decisão:** Adotar o **AWS RDS PostgreSQL 16** como banco de dados relacional gerenciado, provisionado via Terraform no repositório `PosTechFiap_Mecanica_db-infra`.
-- **Justificativa:**
-  - Evita o risco de perda de dados associado a bancos self-hosted em Kubernetes (StatefulSets).
-  - Fornece backups automáticos diários com retenção configurável, patches de segurança e recuperação pontual no tempo (PITR).
-  - Storage autoscaling com discos `gp3`, iniciando em 20 GiB e expandindo dinamicamente até 100 GiB sem parada.
-- **Consequências:**
-  - Isolamento de rede em DB Subnet Group privado e Security Groups restritos à porta 5432.
-  - Gerenciamento seguro de credenciais master através de variáveis protegidas no Terraform e AWS SSM Parameter Store.
-
-### RFC 003 — Estratégia de Autenticação Serverless sem Senha por CPF
-- **Contexto:** Os clientes da oficina necessitam consultar o andamento e aprovar orçamentos de seus veículos de forma simples, sem necessidade de memorização de senhas complexas, porém mantendo a proteção contra acessos indevidos.
-- **Decisão:** Implementar a autenticação de clientes via **CPF** através de uma **AWS Lambda** exposta via **AWS API Gateway**, emitindo tokens JWT assinados compartilhados com o EKS.
-- **Justificativa:**
-  - Desacopla o fluxo de autenticação da aplicação principal (reduzindo carga na API principal em caso de ataques de força bruta).
-  - A Lambda valida matematicamente o CPF antes de qualquer consulta ao banco, descartando requisições inválidas com custo mínimo de computação.
-  - O token JWT gerado carrega a claim `tipo: "cliente"` e `sub: "<cpf>"`, sendo validado de forma stateless pela API FastAPI sem requisições adicionais de autenticação por chamada.
-- **Consequências:**
-  - Compartilhamento seguro da `JWT_SECRET_KEY` entre Lambda e EKS via AWS SSM Parameter Store.
-  - Criação de dependência FastAPI dedicada (`get_current_cliente`) para proteger rotas específicas de clientes.
+| ID | Registro | Status |
+| --- | --- | --- |
+| RFC 001 | [AWS e EKS](rfcs/RFC-001-aws-eks.md) | Aceito |
+| RFC 002 | [RDS PostgreSQL 16](rfcs/RFC-002-rds-postgresql.md) | Aceito com ressalva de seguranca |
+| RFC 003 | [Autenticacao por CPF e JWT](rfcs/RFC-003-autenticacao-cpf-jwt.md) | Aceito |
+| RFC 004 | [Endurecimento do RDS](rfcs/RFC-004-endurecimento-rds.md) | Proposto |
 
 ---
 
 ## 8. ADRs (Architecture Decision Records)
 
-### ADR 001 — Padrão de Comunicação Híbrido: HTTP Síncrono + Fila Redis
-- **Status:** Aceito
-- **Contexto:** Operações de CRUD e consultas de status demandam retorno imediato ao usuário, enquanto notificações por e-mail e emissão de alertas não devem atrasar a resposta da API.
-- **Decisão:** Comunicação HTTP RESTful síncrona para operações de cliente e publicação assíncrona de eventos de domínio em fila **Redis** consumida por workers dedicados.
-- **Consequências:**
-  - Tempo de resposta da API abaixo de 100ms para abertura de ordens.
-  - Resiliência: se o serviço de notificações falhar, a mensagem permanece na fila Redis para reprocessamento sem perda de dados.
+Os registros de decisão arquitetural são mantidos individualmente em `docs/adrs/`. A tabela abaixo funciona como índice e resumo do estado atual.
 
-### ADR 002 — Uso de HPA e Escalabilidade Horizontal em Duas Camadas
-- **Status:** Aceito
-- **Contexto:** A carga na oficina mecânica varia fortemente ao longo do dia, com picos de abertura e fechamento de ordens nos horários comerciais.
-- **Decisão:** Configurar o **Horizontal Pod Autoscaler (HPA)** nos pods da API (2 a 10 réplicas baseadas em CPU > 50% e Memória > 80%) e **Auto Scaling Group** no EKS Node Group (2 a 5 nós EC2).
-- **Consequências:**
-  - Garantia de capacidade de processamento elástica sem desperdício de recursos ociosos.
-  - Necessidade de probes adequadas (`readinessProbe` e `livenessProbe`) para evitar envio de tráfego a pods em inicialização.
-
-### ADR 003 — Observabilidade Nativa com Datadog e Correlação por Request ID
-- **Status:** Aceito
-- **Contexto:** Rastreabilidade fim a fim de transações e capacidade de resposta rápida a incidentes operacionais.
-- **Decisão:** Instrumentação de logs estruturados em formato JSON com propagação do header `X-Request-ID`, métricas DogStatsD customizadas e Datadog Agent DaemonSet no cluster EKS.
-- **Consequências:**
-  - Permite correlacionar chamadas na API, erros no banco e mensagens consumidas no worker através do mesmo identificador (`req-...`).
-  - Painéis executivos com volume de ordens, tempos médios e alertas automáticos P1/P2.
+| ID | Registro | Status |
+| --- | --- | --- |
+| ADR 001 | [HTTP síncrono e Redis](adrs/ADR-001-comunicacao-http-redis.md) | Aceito com ressalva de durabilidade |
+| ADR 002 | [HPA e escalabilidade](adrs/ADR-002-hpa-escalabilidade.md) | Aceito |
+| ADR 003 | [Observabilidade com Datadog](adrs/ADR-003-observabilidade-datadog.md) | Aceito |
 
 ---
 
@@ -256,10 +224,25 @@ A escolha do **PostgreSQL 16 (AWS RDS)** como tecnologia de persistência é sus
 2. **Integridade Referencial Rigorosa:** Foreign keys garantem que peças e serviços não sejam excluídos enquanto houver ordens vinculadas, e que veículos e ordens pertençam a clientes válidos.
 3. **Auditoria Contínua:** Tabela de histórico dedicada (`ordens_servico_historico`) que armazena cada mudança de estado com timestamp e observações, viabilizando o cálculo preciso de métricas operacionais.
 
+### Estado da implantação e ajustes do modelo
+
+As migrations são a fonte da verdade do modelo. O diagrama abaixo foi alinhado a elas: `servicos.preco`, `pecas.preco`, `pecas.codigo`, `pecas.unidade_medida`, `orcamento_aprovado` e a tabela `usuarios` refletem ajustes posteriores do modelo. Os itens de OS mantêm `valor_unitario` e `valor_total` próprios para preservar o preço praticado no momento da abertura, mesmo que o catálogo seja alterado posteriormente.
+
 ### Diagrama Entidade-Relacionamento (ER)
 
 ```mermaid
 erDiagram
+    USUARIO {
+        int id PK
+        string username UK
+        string email UK
+        string hashed_password
+        string nome_completo
+        bool is_active
+        bool is_admin
+        datetime created_at
+        datetime updated_at
+    }
     CLIENTE ||--o{ VEICULO : possui
     CLIENTE ||--o{ ORDEM_SERVICO : solicita
     VEICULO ||--o{ ORDEM_SERVICO : atende
@@ -289,6 +272,10 @@ erDiagram
         string modelo
         int ano
         string cor
+        text observacoes
+        bool ativo
+        datetime created_at
+        datetime updated_at
     }
 
     ORDEM_SERVICO {
@@ -309,20 +296,26 @@ erDiagram
         int id PK
         string nome
         text descricao
-        decimal valor
+        decimal preco
         int tempo_estimado_minutos
         bool ativo
+        datetime created_at
+        datetime updated_at
     }
 
     PECA {
         int id PK
         string nome
-        string codigo_referencia
+        string codigo UK
+        string descricao
+        decimal preco
+        string unidade_medida
         int quantidade_estoque
         int quantidade_reservada
         int estoque_minimo
-        decimal valor_unitario
         bool ativo
+        datetime created_at
+        datetime updated_at
     }
 
     ORDEM_SERVICO_SERVICO {
