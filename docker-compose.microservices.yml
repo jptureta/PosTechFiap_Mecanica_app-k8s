@@ -1,0 +1,93 @@
+services:
+  os-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: os_service
+      POSTGRES_USER: oficina
+      POSTGRES_PASSWORD: os-local-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oficina -d os_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - os_service_data:/var/lib/postgresql/data
+
+  billing-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: billing_service
+      POSTGRES_USER: oficina
+      POSTGRES_PASSWORD: billing-local-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oficina -d billing_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - billing_service_data:/var/lib/postgresql/data
+
+  inventory-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: inventory_service
+      POSTGRES_USER: oficina
+      POSTGRES_PASSWORD: inventory-local-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oficina -d inventory_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - inventory_service_data:/var/lib/postgresql/data
+
+  os-service:
+    build: ./services/os-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://oficina:os-local-only@os-db:5432/os_service
+      BILLING_URL: http://billing-service:8000
+      INVENTORY_URL: http://inventory-service:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
+      JWT_ALGORITHM: HS256
+    depends_on:
+      os-db:
+        condition: service_healthy
+
+  billing-service:
+    build: ./services/billing-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8002:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://oficina:billing-local-only@billing-db:5432/billing_service
+      OS_SERVICE_URL: http://os-service:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
+      PAYMENT_PROVIDER_TOKEN: ${PAYMENT_PROVIDER_TOKEN:-local-only-change-me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
+      JWT_ALGORITHM: HS256
+    depends_on:
+      billing-db:
+        condition: service_healthy
+
+  inventory-service:
+    build: ./services/inventory-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8003:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://oficina:inventory-local-only@inventory-db:5432/inventory_service
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
+      JWT_ALGORITHM: HS256
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+
+volumes:
+  os_service_data:
+  billing_service_data:
+  inventory_service_data:

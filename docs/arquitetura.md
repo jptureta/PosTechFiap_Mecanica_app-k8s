@@ -1,8 +1,23 @@
 # Documentação da Arquitetura — Oficina Mecânica (Fase 3)
 
+## Estado da migração para microsserviços
+
+O conteúdo abaixo descreve a arquitetura legada que continua implantada. A
+implementação de transição em `services/` separa OS, Billing e Inventory, cada
+qual com PostgreSQL e infraestrutura Terraform próprios. O OS coordena a Saga
+por chamadas HTTP autenticadas e persistência local; Billing notifica aprovação
+e pagamento verificado; Inventory oferece reserva idempotente e liberação.
+
+O gateway FastAPI oferece rotas novas em `/api/v2` e mantém `/api/v1` sem
+alterações. A migração de dados, configuração dos secrets, publicação dos três
+repositórios remotos e validação dos fluxos em ambiente AWS devem ocorrer antes
+de qualquer corte de tráfego. O registro de compensação sinaliza
+`REFUND_REQUIRED`; um estorno efetivo depende de integração com o adquirente e
+reconciliação.
+
 ## 1. Visão Geral
 
-A solução de Oficina Mecânica foi estruturada em quatro repositórios complementares integrados aos serviços gerenciados da AWS:
+A solução de Oficina Mecânica possui quatro repositórios legados complementares integrados aos serviços gerenciados da AWS. A decomposição em serviços tem diretórios locais de preparação em `services/`; eles ainda precisam ser publicados como repositórios independentes:
 
 - **`PosTechFiap_Mecanica_app-k8s`**: Aplicação principal em FastAPI executando em cluster Kubernetes (AWS EKS), com workers assíncronos e HPA.
 - **`PosTechFiap_Mecanica_db-infra`**: Infraestrutura Terraform responsável pelo banco de dados gerenciado **AWS RDS PostgreSQL 16**.

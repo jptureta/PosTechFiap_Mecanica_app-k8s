@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     def REDIS_URL(self) -> str:
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
+    OS_SERVICE_URL: str = "http://os-service:8000"
+    BILLING_SERVICE_URL: str = "http://billing-service:8000"
+    INVENTORY_SERVICE_URL: str = "http://inventory-service:8000"
+
     
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"

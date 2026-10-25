@@ -26,6 +26,50 @@ flowchart LR
     DB -->|Healthcheck e métricas| DD
 ```
 
+## Microsserviços e Repositórios Independentes
+
+A aplicação foi refatorada em três microsserviços totalmente desacoplados, cada um com seu próprio repositório no GitHub, infraestrutura Terraform, banco PostgreSQL isolado, manifests Kubernetes e pipeline de CI/CD:
+
+- **[PosTechFiap_Mecanica_os-service](https://github.com/jptureta/PosTechFiap_Mecanica_os-service)**: Abertura de ordens de serviço, atualização de status, consulta de histórico, tabela de Outbox para auditoria transacional e coordenação da Saga distribuída com compensação idempotente.
+- **[PosTechFiap_Mecanica_billing-service](https://github.com/jptureta/PosTechFiap_Mecanica_billing-service)**: Geração e envio de orçamentos para aprovação (notificação por email/webhook), registro e verificação de pagamentos via webhook de provedor externo com token e gestão de estorno (`REFUND_REQUIRED`).
+- **[PosTechFiap_Mecanica_inventory-service](https://github.com/jptureta/PosTechFiap_Mecanica_inventory-service)**: Catálogo de peças/serviços, controle concorrente de estoque com locks pessimistas (`SELECT ... FOR UPDATE`), reserva e liberação atômica de peças.
+
+Para executar localmente todos os serviços em conjunto com o monólito legado (Strangler Fig pattern):
+`docker compose -f docker-compose.yml -f docker-compose.microservices.yml up --build`.
+As rotas `/api/v2` encaminham OS, orçamento/pagamento e catálogo para os serviços nas portas 8001, 8002 e 8003. A OS coordena a Saga com idempotência ponta a ponta e compensação automática.
+
+Os novos endpoints aceitam os mesmos JWTs da Lambda (`JWT_SECRET_KEY` e
+`JWT_ALGORITHM`). Cadastre peças/serviços pela API v2 usando token de
+administrador antes de abrir OS. As rotas `/api/v1` existentes permanecem ativas
+durante a migração.
+
+Exemplo do fluxo (substitua os tokens e IDs por valores válidos):
+
+```http
+PUT /api/v2/parts/oil-filter
+Authorization: Bearer <admin-jwt>
+Content-Type: application/json
+
+{"name":"Filtro de óleo","unit_price":"45.90","available_stock":10}
+
+POST /api/v2/orders
+Authorization: Bearer <customer-jwt>
+Content-Type: application/json
+
+{"customer_id":"<cliente_id-do-jwt>","vehicle_id":"<veiculo_id>","items":[{"kind":"PART","sku":"oil-filter","quantity":1}]}
+```
+
+A resposta da OS traz `quote_id`; use esse ID em
+`POST /api/v2/quotes/{quote_id}/approval` e
+`POST /api/v2/quotes/{quote_id}/payments`. A verificação final é chamada pelo
+provedor em `POST /api/v2/payments/{payment_id}/verify` com `X-Provider-Token`.
+
+**Transição:** a API FastAPI e os bancos atualmente implantados permanecem como
+legado e ainda não encaminham as rotas existentes para esses serviços. Não
+remova os recursos legados nem troque clientes de produção até migrar dados,
+configurar os novos secrets, criar/publicar os repositórios remotos e validar
+integração/autenticação no gateway.
+
 ## Stack e componentes
 
 - Python 3.12, FastAPI e SQLAlchemy
@@ -114,6 +158,8 @@ app/                 Código da API, domínio e worker
 alembic/             Migrações do banco
 k8s/                 Deployments, Services, probes e Datadog
 tests/               Testes automatizados
+services/            Serviços autônomos de OS, Billing e Inventory
+docker-compose.microservices.yml
 Dockerfile           Imagem da aplicação
 .github/workflows/   Pipeline de CI/CD
 ```

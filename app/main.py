@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.v1.router import router
+from app.api.v2.router import router as router_v2
 from app.config import get_settings
 from app.observability import get_metrics_snapshot, logger, record_http_request, generate_request_id
 
@@ -72,6 +73,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(router_v2)
 
 
 @app.get("/", tags=["Health"])
