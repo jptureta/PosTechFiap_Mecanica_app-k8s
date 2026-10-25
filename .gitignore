@@ -19,3 +19,14 @@ env/
 .DS_Store
 .vscode/
 .idea/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform.tfvars.json
+
+# Databases
+*.db
+*.db-journal

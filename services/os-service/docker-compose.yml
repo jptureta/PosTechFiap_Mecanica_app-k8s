@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: os_service
+      POSTGRES_USER: oficina
+      POSTGRES_PASSWORD: oficina-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oficina -d os_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - os_data:/var/lib/postgresql/data
+  os-service:
+    build: .
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://oficina:oficina-local@db:5432/os_service
+      BILLING_URL: http://billing-service:8000
+      INVENTORY_URL: http://inventory-service:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
+      JWT_ALGORITHM: HS256
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  os_data:
