@@ -14,7 +14,7 @@ Testes: `uv sync --dev && uv run pytest`.
 
 - `POST /quotes` cria orçamento idempotente por `order_id`.
 - `POST /quotes/{id}/approval` registra aprovação e notifica OS.
-- `POST /quotes/{id}/payments` registra pagamento pendente.
+- `POST /quotes/{id}/payments` registra pagamento pendente. Com o Mercado Pago configurado, cria o pedido QR dinâmico e retorna `qr_data` para geração do código.
 - `POST /payments/{id}/verify` recebe confirmação/recusa assinada pelo gateway
   configurado e, se confirmada, notifica o orquestrador OS.
 - `/internal/payments/{id}/compensate` registra a necessidade de estorno após
@@ -23,6 +23,13 @@ Testes: `uv sync --dev && uv run pytest`.
   reconciliação com o provedor.
 
 Configure `OS_SERVICE_URL`, `INTERNAL_SERVICE_TOKEN` e `PAYMENT_PROVIDER_TOKEN`.
+Para Mercado Pago QR dinâmico, configure também `MERCADO_PAGO_ACCESS_TOKEN`,
+`MERCADO_PAGO_USER_ID`, `MERCADO_PAGO_POS_ID` e `MERCADO_PAGO_NOTIFICATION_URL`.
+Cadastre o webhook público em
+`POST /api/v2/payments/mercado-pago/webhook` (encaminhado pelo gateway para o
+serviço) para o Mercado Pago notificar a aprovação
+através de um `merchant_order`. O access token, o user ID e o POS devem pertencer
+à mesma conta Mercado Pago e o POS deve estar cadastrado previamente no painel.
 Use o mesmo token interno no OS e Inventory.
 Configure `JWT_SECRET_KEY` e `JWT_ALGORITHM` para validar os mesmos tokens
 assinados pela Lambda/API legada; clientes só acessam orçamentos próprios.

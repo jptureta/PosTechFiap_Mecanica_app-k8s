@@ -33,6 +33,7 @@ A aplicação foi refatorada em três microsserviços totalmente desacoplados, c
 - **[PosTechFiap_Mecanica_os-service](https://github.com/jptureta/PosTechFiap_Mecanica_os-service)**: Abertura de ordens de serviço, atualização de status, consulta de histórico, tabela de Outbox para auditoria transacional e coordenação da Saga distribuída com compensação idempotente.
 - **[PosTechFiap_Mecanica_billing-service](https://github.com/jptureta/PosTechFiap_Mecanica_billing-service)**: Geração e envio de orçamentos para aprovação (notificação por email/webhook), registro e verificação de pagamentos via webhook de provedor externo com token e gestão de estorno (`REFUND_REQUIRED`).
 - **[PosTechFiap_Mecanica_inventory-service](https://github.com/jptureta/PosTechFiap_Mecanica_inventory-service)**: Catálogo de peças/serviços, controle concorrente de estoque com locks pessimistas (`SELECT ... FOR UPDATE`), reserva e liberação atômica de peças.
+- **Execução e Produção** (`services/execution-service`): fila das ordens aprovadas, acompanhamento de diagnóstico, reparo, cancelamento e conclusão. Usa PostgreSQL para persistência própria e Redis como fila NoSQL; ao concluir, comunica o status final ao OS Service por serviço interno autenticado.
 
 Para executar localmente todos os serviços em conjunto com o monólito legado (Strangler Fig pattern):
 `docker compose -f docker-compose.yml -f docker-compose.microservices.yml up --build`.

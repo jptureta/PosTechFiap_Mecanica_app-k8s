@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     OS_SERVICE_URL: str = "http://os-service:8000"
     BILLING_SERVICE_URL: str = "http://billing-service:8000"
     INVENTORY_SERVICE_URL: str = "http://inventory-service:8000"
+    EXECUTION_SERVICE_URL: str = "http://execution-service:8000"
 
     
     JWT_SECRET_KEY: str

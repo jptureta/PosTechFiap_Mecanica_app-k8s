@@ -324,6 +324,24 @@ def change_status(
     return order_document(order)
 
 
+@app.patch("/internal/orders/{order_id}/status")
+def internal_change_status(
+    order_id: str,
+    payload: StatusChange,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_internal_token),
+):
+    order = db.get(Order, order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="order not found")
+    allowed = {"IN_DIAGNOSIS", "IN_PROGRESS", "COMPLETED", "CANCELLED"}
+    if payload.status not in allowed:
+        raise HTTPException(status_code=409, detail=f"unsupported execution status: {payload.status}")
+    record_status(db, order, payload.status, payload.note)
+    db.commit()
+    return order_document(order)
+
+
 @app.post("/internal/orders/{order_id}/quote-approved")
 def quote_approved(
     order_id: str,

@@ -1,4 +1,11 @@
 services:
+  api:
+    environment:
+      EXECUTION_SERVICE_URL: http://execution-service:8000
+    depends_on:
+      execution-service:
+        condition: service_started
+
   os-db:
     image: postgres:16-alpine
     environment:
@@ -12,6 +19,28 @@ services:
       retries: 10
     volumes:
       - os_service_data:/var/lib/postgresql/data
+
+  execution-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: execution_service
+      POSTGRES_USER: oficina
+      POSTGRES_PASSWORD: execution-local-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oficina -d execution_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - execution_service_data:/var/lib/postgresql/data
+
+  execution-queue:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   billing-db:
     image: postgres:16-alpine
@@ -57,6 +86,24 @@ services:
       os-db:
         condition: service_healthy
 
+  execution-service:
+    build: ./services/execution-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8004:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://oficina:execution-local-only@execution-db:5432/execution_service
+      REDIS_URL: redis://execution-queue:6379/0
+      OS_SERVICE_URL: http://os-service:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
+      JWT_ALGORITHM: HS256
+    depends_on:
+      execution-db:
+        condition: service_healthy
+      execution-queue:
+        condition: service_healthy
+
   billing-service:
     build: ./services/billing-service
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
@@ -67,6 +114,10 @@ services:
       OS_SERVICE_URL: http://os-service:8000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
       PAYMENT_PROVIDER_TOKEN: ${PAYMENT_PROVIDER_TOKEN:-local-only-change-me}
+      MERCADO_PAGO_ACCESS_TOKEN: ${MERCADO_PAGO_ACCESS_TOKEN:-}
+      MERCADO_PAGO_USER_ID: ${MERCADO_PAGO_USER_ID:-}
+      MERCADO_PAGO_POS_ID: ${MERCADO_PAGO_POS_ID:-OFICINA001}
+      MERCADO_PAGO_NOTIFICATION_URL: ${MERCADO_PAGO_NOTIFICATION_URL:-}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
       JWT_ALGORITHM: HS256
     depends_on:
@@ -89,5 +140,6 @@ services:
 
 volumes:
   os_service_data:
+  execution_service_data:
   billing_service_data:
   inventory_service_data:

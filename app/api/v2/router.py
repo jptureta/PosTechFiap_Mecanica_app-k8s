@@ -55,6 +55,36 @@ def create_order(request: Request, payload: dict[str, Any]):
     return forward_request(request, settings.OS_SERVICE_URL, "/orders", "POST", payload)
 
 
+@router.post("/executions")
+def create_execution(request: Request, payload: dict[str, Any]):
+    return forward_request(request, settings.EXECUTION_SERVICE_URL, "/executions", "POST", payload)
+
+
+@router.get("/executions")
+def list_executions(request: Request):
+    return forward_request(request, settings.EXECUTION_SERVICE_URL, "/executions", "GET")
+
+
+@router.get("/executions/{execution_id}")
+def get_execution(execution_id: str, request: Request):
+    return forward_request(request, settings.EXECUTION_SERVICE_URL, f"/executions/{execution_id}", "GET")
+
+
+@router.post("/executions/next")
+def claim_next_execution(request: Request):
+    return forward_request(request, settings.EXECUTION_SERVICE_URL, "/executions/next", "POST")
+
+
+@router.patch("/executions/{execution_id}/status")
+def update_execution_status(execution_id: str, request: Request, payload: dict[str, Any]):
+    return forward_request(request, settings.EXECUTION_SERVICE_URL, f"/executions/{execution_id}/status", "PATCH", payload)
+
+
+@router.post("/executions/{execution_id}/complete")
+def complete_execution(execution_id: str, request: Request, payload: dict[str, Any]):
+    return forward_request(request, settings.EXECUTION_SERVICE_URL, f"/executions/{execution_id}/complete", "POST", payload)
+
+
 @router.post("/orders/{order_id}/retry-quote")
 def retry_order_quote(order_id: str, request: Request):
     return forward_request(
@@ -133,6 +163,17 @@ def register_payment(quote_id: str, request: Request):
         settings.BILLING_SERVICE_URL,
         f"/quotes/{quote_id}/payments",
         "POST",
+    )
+
+
+@router.post("/payments/mercado-pago/webhook")
+def mercado_pago_webhook(request: Request, payload: dict[str, Any]):
+    return forward_request(
+        request,
+        settings.BILLING_SERVICE_URL,
+        "/payments/mercado-pago/webhook",
+        "POST",
+        payload,
     )
 
 

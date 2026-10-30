@@ -1,0 +1,19 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: execution-service-migration
+  namespace: oficina
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: alembic
+          image: ghcr.io/jptureta/oficina-execution-service:latest
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: execution-service-secrets
+                  key: database-url
