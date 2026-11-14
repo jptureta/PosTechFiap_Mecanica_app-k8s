@@ -35,6 +35,51 @@ A aplicação foi refatorada em três microsserviços totalmente desacoplados, c
 - **[PosTechFiap_Mecanica_inventory-service](https://github.com/jptureta/PosTechFiap_Mecanica_inventory-service)**: Catálogo de peças/serviços, controle concorrente de estoque com locks pessimistas (`SELECT ... FOR UPDATE`), reserva e liberação atômica de peças.
 - **Execução e Produção** (`services/execution-service`): fila das ordens aprovadas, acompanhamento de diagnóstico, reparo, cancelamento e conclusão. Usa PostgreSQL para persistência própria e Redis como fila NoSQL; ao concluir, comunica o status final ao OS Service por serviço interno autenticado.
 
+---
+
+## Implementação da Saga Pattern (Orquestração Centralizada e Compensação)
+
+Para coordenar as transações distribuídas entre os microsserviços desacoplados com consistência eventual garantida, foi implementado o **Saga Pattern** com **Orquestrador Central** sediado no `os-service`, suportado pelo padrão **Transactional Outbox** e mensageria assíncrona durável via **RabbitMQ** (com tópicos dedicados e Dead-Letter Queues - `.dlq`).
+
+### 1. Fluxo Transacional Coordenado
+1. **Abertura da OS (`POST /orders`)**: O cliente solicita abertura de OS. O `os-service` valida itens de catálogo via HTTP síncrono com o `inventory-service`, persiste a OS em PostgreSQL com estado inicial de Saga `QUOTE_PENDING` e insere o comando `CreateQuote` na tabela `outbox_messages` dentro da mesma transação ACID local.
+2. **Relay e Geração de Orçamento**: O relay publica `CreateQuote` na fila durável `oficina.billing.commands`. O `billing-service` consome o comando, calcula os totais, cria o orçamento e publica o evento `QuoteCreated` na fila `oficina.os.events`. O `os-service` transiciona o estado para `QUOTE_CREATED`.
+3. **Aprovação do Cliente**: O cliente aprova o orçamento (`POST /quotes/{id}/approval`). O `billing-service` emite `QuoteApproved`, e o `os-service` avança o estado da OS para `AWAITING_PAYMENT`.
+4. **Confirmação do Pagamento**: O webhook do provedor externo (Mercado Pago) notifica o `billing-service` (`POST /payments/{id}/verify`), que emite `PaymentConfirmed`. O `os-service` transiciona o estado para `STOCK_RESERVING` e registra o comando `ReserveStock` na Outbox.
+5. **Reserva Atômica de Estoque**: O `inventory-service` consome `ReserveStock` de `oficina.inventory.commands`, executa a reserva concorrente via `SELECT ... FOR UPDATE` e emite `StockReserved` em `oficina.os.events`.
+6. **Envio para Execução**: O `os-service` consome `StockReserved`, avança o status da OS para `READY_FOR_SERVICE` (Saga `COMPLETED`) e enfileira a ordem automaticamente na esteira de produção/oficina (`ensure_execution_queued` com status `QUEUED`).
+7. **Esteira de Produção e Entrega**: A OS progride pela esteira de oficina (`QUEUED -> DIAGNOSING -> REPAIRING -> COMPLETED -> DELIVERED`), com persistência de laudos e diagnósticos técnicos OBD-II no **Amazon DynamoDB**.
+
+### 2. Rollback e Ações de Compensação em Caso de Falha
+Em caso de falha em qualquer etapa da transação distribuída, o orquestrador aciona compensações determinísticas e idempotentes:
+- **Orçamento Rejeitado (`QuoteRejected`)**: O cliente rejeita a proposta; a OS é cancelada imediatamente (`CANCELLED`).
+- **Pagamento Falhou ou Recusado (`PaymentFailed`)**: A OS é transicionada diretamente para `CANCELLED`, sem retenção de recursos.
+- **Falha de Reserva de Estoque (`StockReservationFailed`)**: Se o saldo de peças for insuficiente após a confirmação do pagamento, a transação local do inventário falha e emite `StockReservationFailed`. O `os-service` altera seu estado para `COMPENSATION_PENDING` e emite o comando de compensação `RefundPayment` para `oficina.billing.commands`. O `billing-service` marca o pagamento como `REFUND_REQUIRED` (para estorno seguro junto ao provedor) e emite `PaymentRefundRequested`, fazendo com que a OS conclua a compensação em `COMPENSATED` e status final `CANCELLED`.
+- **Cancelamento Durante a Oficina / Reparo**: Caso ocorra cancelamento com peças já alocadas e pagamento liquidado, o orquestrador dispara compensação em cadeia ordenada:
+  1. Emite comando `ReleaseStock` para devolução atômica das peças ao estoque.
+  2. Ao receber o evento `StockReleased`, emite comando `RefundPayment` ao faturamento.
+  3. Ao receber `PaymentRefundRequested`, finaliza com estado `COMPENSATED` e status `CANCELLED`.
+- **Retentativa Administrativa Idempotente**: Endpoint `POST /orders/{id}/retry-compensation` permite retentar compensações pendentes de forma segura, evitando duplicação de saldo ou reembolsos duplicados.
+
+### 3. Justificativa da Escolha por Orquestração (vs. Coreografia)
+A escolha do padrão **Saga por Orquestração** com o `os-service` como orquestrador central foi definida pelos seguintes pilares de arquitetura:
+1. **Visibilidade e Auditoria Centralizada**: A Ordem de Serviço é a entidade central e o agregador do negócio da oficina. Manter o estado da Saga (`saga_state`) e a máquina de transições centralizados no `os-service` oferece rastreabilidade ponta a ponta sem espalhar regras de fluxo por múltiplos serviços.
+2. **Controle de Compensação Determinístico**: Transações que envolvem dinheiro (reembolsos) e estoque físico exigem ordem estrita de reversão (ex.: liberar peças antes de solicitar estorno). O orquestrador central coordena essa sequência de compensações sem gerar condições de corrida.
+3. **Prevenção de Acoplamento Cíclico**: No modelo coreografado, o serviço de faturamento precisaria escutar eventos do inventário e vice-versa, gerando acoplamento complexo. Na orquestração, `billing-service` e `inventory-service` conhecem apenas seus próprios comandos/eventos, desacoplados entre si.
+4. **Resiliência e Tolerância a Falhas**: A combinação de *Transactional Outbox*, RabbitMQ durável e Dead-Letter Queues (`.dlq`) garante que nenhum comando se perca em caso de reinicialização ou falha temporária de rede.
+
+### 4. Matriz de Estados da Saga e Compensações
+
+| Etapa | Comando Emitido (Outbox -> RabbitMQ) | Evento Consumido (`oficina.os.events`) | Estado da OS / Saga | Compensação / Rollback em Caso de Falha |
+|---|---|---|---|---|
+| **1. Abertura** | `CreateQuote` | `QuoteCreated` | `QUOTE_PENDING` -> `QUOTE_CREATED` | Retentativa via Outbox / `/retry-quote` |
+| **2. Aprovação** | — | `QuoteApproved` / `QuoteRejected` | `AWAITING_PAYMENT` / `CANCELLED` | `QuoteRejected` cancela a OS imediatamente |
+| **3. Pagamento** | — | `PaymentConfirmed` / `PaymentFailed` | `STOCK_RESERVING` / `CANCELLED` | `PaymentFailed` cancela a OS imediatamente |
+| **4. Estoque** | `ReserveStock` | `StockReserved` / `StockReservationFailed` | `READY_FOR_SERVICE` (`COMPLETED`) | Em falha: `COMPENSATION_PENDING` -> emite `RefundPayment` (`REFUND_REQUIRED`) -> `COMPENSATED` (`CANCELLED`) |
+| **5. Execução** | Fila interna (`/executions`) | Transições `QUEUED -> DIAGNOSING -> REPAIRING -> COMPLETED` | `IN_DIAGNOSIS -> IN_PROGRESS -> COMPLETED -> DELIVERED` | Cancelamento na oficina: emite `ReleaseStock` + `RefundPayment` -> `COMPENSATED` (`CANCELLED`) |
+
+---
+
 Para executar localmente todos os serviços em conjunto com o monólito legado (Strangler Fig pattern):
 `docker compose -f docker-compose.yml -f docker-compose.microservices.yml up --build`.
 Esse compose usa os repositórios OS, Billing e Inventory presentes ao lado deste repositório no workspace. As rotas `/api/v2` encaminham OS, orçamento/pagamento e catálogo para os serviços nas portas 8001, 8002 e 8003. A OS coordena a Saga com outbox transacional e RabbitMQ; consultas de catálogo necessárias permanecem REST síncronas. Cada serviço acessa exclusivamente seu próprio PostgreSQL, sem acesso direto aos bancos dos demais.
