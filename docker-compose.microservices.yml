@@ -70,8 +70,32 @@ services:
     volumes:
       - inventory_service_data:/var/lib/postgresql/data
 
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: oficina
+      RABBITMQ_DEFAULT_PASS: oficina-local-only
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: dynamodb
+      AWS_DEFAULT_REGION: us-east-1
+
   os-service:
-    build: ./services/os-service
+    build: ../PosTechFiap_Mecanica_os-service
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8001:8000"
@@ -82,9 +106,20 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
       JWT_ALGORITHM: HS256
+      MESSAGING_ENABLED: "true"
+      RABBITMQ_URL: amqp://oficina:oficina-local-only@rabbitmq:5672/%2F
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      DYNAMODB_ENDPOINT_URL: http://localstack:4566
+      DIAGNOSTICS_TABLE_NAME: oficina-os-diagnostics
     depends_on:
       os-db:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      localstack:
+        condition: service_started
 
   execution-service:
     build: ./services/execution-service
@@ -105,7 +140,7 @@ services:
         condition: service_healthy
 
   billing-service:
-    build: ./services/billing-service
+    build: ../PosTechFiap_Mecanica_billing-service
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8002:8000"
@@ -120,12 +155,16 @@ services:
       MERCADO_PAGO_NOTIFICATION_URL: ${MERCADO_PAGO_NOTIFICATION_URL:-}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
       JWT_ALGORITHM: HS256
+      MESSAGING_ENABLED: "true"
+      RABBITMQ_URL: amqp://oficina:oficina-local-only@rabbitmq:5672/%2F
     depends_on:
       billing-db:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   inventory-service:
-    build: ./services/inventory-service
+    build: ../PosTechFiap_Mecanica_inventory-service
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8003:8000"
@@ -134,8 +173,12 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-only-change-me}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-only-change-me}
       JWT_ALGORITHM: HS256
+      MESSAGING_ENABLED: "true"
+      RABBITMQ_URL: amqp://oficina:oficina-local-only@rabbitmq:5672/%2F
     depends_on:
       inventory-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
 volumes:
@@ -143,3 +186,4 @@ volumes:
   execution_service_data:
   billing_service_data:
   inventory_service_data:
+  rabbitmq_data:

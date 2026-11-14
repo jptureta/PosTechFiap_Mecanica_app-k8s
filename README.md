@@ -37,7 +37,7 @@ A aplicação foi refatorada em três microsserviços totalmente desacoplados, c
 
 Para executar localmente todos os serviços em conjunto com o monólito legado (Strangler Fig pattern):
 `docker compose -f docker-compose.yml -f docker-compose.microservices.yml up --build`.
-As rotas `/api/v2` encaminham OS, orçamento/pagamento e catálogo para os serviços nas portas 8001, 8002 e 8003. A OS coordena a Saga com idempotência ponta a ponta e compensação automática.
+Esse compose usa os repositórios OS, Billing e Inventory presentes ao lado deste repositório no workspace. As rotas `/api/v2` encaminham OS, orçamento/pagamento e catálogo para os serviços nas portas 8001, 8002 e 8003. A OS coordena a Saga com outbox transacional e RabbitMQ; consultas de catálogo necessárias permanecem REST síncronas. Cada serviço acessa exclusivamente seu próprio PostgreSQL, sem acesso direto aos bancos dos demais.
 
 Os novos endpoints aceitam os mesmos JWTs da Lambda (`JWT_SECRET_KEY` e
 `JWT_ALGORITHM`). Cadastre peças/serviços pela API v2 usando token de
@@ -159,7 +159,7 @@ app/                 Código da API, domínio e worker
 alembic/             Migrações do banco
 k8s/                 Deployments, Services, probes e Datadog
 tests/               Testes automatizados
-services/            Serviços autônomos de OS, Billing e Inventory
+services/            Serviço de execução local e snapshots legados dos microsserviços
 docker-compose.microservices.yml
 Dockerfile           Imagem da aplicação
 .github/workflows/   Pipeline de CI/CD
