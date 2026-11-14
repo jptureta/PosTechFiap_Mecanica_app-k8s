@@ -40,6 +40,17 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
+      - name: Install execution service dependencies
+        run: uv sync --project services/execution-service --dev
+
+      - name: Test execution service with coverage
+        working-directory: services/execution-service
+        run: uv run pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=80 -q
+
+      - name: Lint execution service
+        working-directory: services/execution-service
+        run: uv run ruff check --select E4,E7,E9,F app tests
+
   build-and-push:
     name: Build & Push Image
     needs: test

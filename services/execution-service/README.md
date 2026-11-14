@@ -43,6 +43,8 @@ A API do serviço fica disponível em `http://localhost:8004/docs`.
 
 ### Testes Automatizados
 ```powershell
-uv run pytest
+uv sync --dev
+uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=80 -q
+uv run ruff check --select E4,E7,E9,F app tests
 ```
 
